@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>تست زنده</title>
+  <style>
+    body { font-family: Tahoma, sans-serif; max-width: 520px; margin: 24px auto; padding: 0 12px; }
+    button { margin: 4px; padding: 8px 12px; }
+    pre { background: #f4f4f4; padding: 8px; direction: ltr; white-space: pre-wrap; }
+    .box { border: 1px solid #ddd; border-radius: 8px; padding: 8px 12px; margin: 12px 0; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <b>۱. دستگاه (شبیه‌ساز)</b><br>
+    <button onclick="startDevice()">شروع دستگاه</button>
+    <button onclick="stopDevice()">توقف دستگاه</button>
+    <span id="devState">خاموش</span>
+  </div>
+
+  <div class="box">
+    <b>۲. پخش زنده</b><br>
+    <button onclick="startLive()">شروع پخش</button>
+    <button onclick="stopLive()">توقف پخش</button>
+    <div>
+      <span id="playDot" style="display:inline-block;width:12px;height:12px;border-radius:50%;background:#bbb;vertical-align:middle"></span>
+      <b id="playState">پخش متوقف است</b>
+    </div>
+    <div>bpm: <b id="bpm">-</b> · دستگاه: <span id="online">-</span></div>
+  </div>
+
+  <div class="box">
+    <b>۳. ضبط</b><br>
+    <button onclick="rec('start')">شروع ضبط</button>
+    <button onclick="rec('stop')">توقف ضبط</button>
+    <pre id="out"></pre>
+  </div>
+
+  <div class="box">
+    <b>۴. ضبط‌های اخیر</b>
+    <ul id="list" style="padding:0; list-style:none"></ul>
+    <audio id="player" controls style="width:100%"></audio>
+  </div>
+
+<script>
+if (!localStorage.getItem("access")) location.href = "/login/";
+const $ = id => document.getElementById(id);
+const RATE = 16000, CHUNK = 1600;           // ۰٫۱ ثانیه
+const BPM = 140;
+
+async function api(url, opts = {}) {
+  const send = () => fetch(url, {...opts, headers: {...(opts.headers||{}),
+    Authorization: "Bearer " + localStorage.getItem("access")}});
+  let r = await send();
+  if (r.status === 401) {
+    const rr = await fetch("/api/auth/refresh/", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({refresh: localStorage.getItem("refresh")})});
+    if (!rr.ok) { location.href = "/login/"; return r; }
+    const d = await rr.json();
+    localStorage.setItem("access", d.access);
+    if (d.refresh) localStorage.setItem("refresh", d.refresh);
+    r = await send();
+  }
+  return r;
+}
+
+/* ---------- دستگاه شبیه‌ساز ---------- */
+let devTimer = null, sample = 0;
+function makeChunk() {
+  const buf = new Int16Array(CHUNK);
+  const period = 60 / BPM;
+  for (let i = 0; i < CHUNK; i++, sample++) {
+    const t = sample / RATE;
+    const p = t % period;
+    const thump = Math.exp(-p * 25) * Math.sin(2 * Math.PI * 70 * t)
+                + 0.5 * Math.exp(-Math.abs(p - 0.12) * 40) * Math.sin(2 * Math.PI * 90 * t);
+    buf[i] = Math.max(-1, Math.min(1, thump * 0.8)) * 20000;
+  }
+  return new Uint8Array(buf.buffer);
+}
+function startDevice() {
+  if (devTimer) return;
+  devTimer = setInterval(async () => {
+    const seq = Math.floor(Date.now() / 100);
+    try {
+      const r = await fetch("/api/device/chunks/", {
+        method: "POST",
+        headers: {"X-Device-Serial": "DEV1", "X-Device-Key": "secret123",
+                  "X-Seq": String(seq), "X-BPM": String(BPM)},
+        body: makeChunk()
+      });
+      $("devState").textContent = r.status === 204 ? "در حال ارسال ✓" : "خطا: " + r.status;
+    } catch (e) { $("devState").textContent = "خطای شبکه"; }
+  }, 100);
+}
+function stopDevice() { clearInterval(devTimer); devTimer = null; $("devState").textContent = "خاموش"; }
+
+/* ---------- پخش زنده ---------- */
+let ctx = null, pollTimer = null, after = 0, nextTime = 0;
+
+function setPlay(on, text) {
+  $("playDot").style.background = on ? "#2e7d32" : "#bbb";
+  $("playState").textContent = text;
+}
+
+function playChunk(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const pcm = new Int16Array(bytes.buffer);
+  const ab = ctx.createBuffer(1, pcm.length, RATE);
+  const ch = ab.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+  const src = ctx.createBufferSource();
+  src.buffer = ab; src.connect(ctx.destination);
+  nextTime = Math.max(nextTime, ctx.currentTime + 0.15);
+  src.start(nextTime);
+  nextTime += ab.duration;
+}
+
+function startLive() {
+  if (pollTimer) return;
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  after = 0; nextTime = 0;
+  setPlay(false, "در انتظار دستگاه...");
+  pollTimer = setInterval(async () => {
+    const r = await api("/api/live/?after=" + after);
+    if (!r.ok) { $("online").textContent = "خطا " + r.status; return; }
+    const d = await r.json();
+    $("online").textContent = d.online ? "آنلاین" : "آفلاین";
+    $("bpm").textContent = d.bpm ?? "-";
+    if (d.online) {
+      d.chunks.forEach(playChunk);
+      after = d.last_seq;
+      setPlay(true, "در حال پخش 🔊");
+    } else {
+      setPlay(false, "در انتظار دستگاه...");
+    }
+  }, 300);
+}
+
+function stopLive() {
+  clearInterval(pollTimer); pollTimer = null;
+  if (ctx) ctx.close();
+  setPlay(false, "پخش متوقف است");
+  $("online").textContent = "-";
+  $("bpm").textContent = "-";
+}
+
+/* ---------- ضبط ---------- */
+async function rec(action) {
+  const r = await api("/api/live/record/" + action + "/", {method: "POST"});
+  const t = await r.text();
+  $("out").textContent = r.status + " " + t.slice(0, 300);
+  if (action === "stop" && r.status === 201) loadList();   // بعد از ضبط موفق، لیست تازه شود
+}
+
+/* ---------- ضبط‌های اخیر ---------- */
+function fmtTime(iso) {
+  const d = new Date(iso);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const day = new Date(d); day.setHours(0, 0, 0, 0);
+  const diff = Math.round((today - day) / 86400000);
+  const hm = d.toLocaleTimeString("fa-IR", {hour: "2-digit", minute: "2-digit", hour12: false});
+  if (diff === 0) return "امروز، " + hm;
+  if (diff === 1) return "دیروز، " + hm;
+  return d.toLocaleDateString("fa-IR", {day: "numeric", month: "long"}) + "، " + hm;
+}
+function fmtDur(s) {
+  return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+}
+
+async function loadList() {
+  const r = await api("/api/recordings/?limit=3");
+  if (!r.ok) return;
+  const d = await r.json();
+  const ul = $("list");
+  ul.innerHTML = "";
+  if (!d.results.length) { ul.innerHTML = "<li>هنوز ضبطی نیست.</li>"; return; }
+  d.results.forEach(rec => {
+    const li = document.createElement("li");
+    li.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #eee";
+    li.innerHTML = `<span><b>${fmtTime(rec.recorded_at || rec.created_at)}</b><br>
+                    <small>${fmtDur(rec.duration)}</small></span>
+                    <span style="color:#c2185b">${rec.bpm ?? "-"}</span>`;
+    const b = document.createElement("button");
+    b.textContent = "▶";
+    b.onclick = () => play(rec.audio_url);
+    li.appendChild(b);
+    ul.appendChild(li);
+  });
+}
+
+async function play(url) {
+  const r = await api(url);
+  if (!r.ok) return;
+  $("player").src = URL.createObjectURL(await r.blob());
+  $("player").play();
+}
+
+loadList();   // هنگام باز شدن صفحه
+</script>
+</body>
+</html>

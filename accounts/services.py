@@ -44,6 +44,7 @@ def send_otp(identifier: str, deliver):
     if cache.get(f"otp_cool:{identifier}"):
         raise OTPError("لطفاً کمی بعد دوباره تلاش کن.")
     code = f"{secrets.randbelow(10**6):06d}"
+    print("DEBUG OTP:", identifier, code)  
     cache.set(f"otp:{identifier}", make_password(code), OTP_TTL)
     cache.set(f"otp_cool:{identifier}", 1, RESEND_COOLDOWN)
     cache.delete(f"otp_tries:{identifier}")
