@@ -164,6 +164,30 @@ class EmailOTPTests(BaseCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("access", r.data)
 
+    def test_logout_blacklists_refresh(self):
+        self.post("/api/auth/email/request-otp/", {"email": EMAIL})
+        r = self.post("/api/auth/email/verify-otp/", {"email": EMAIL, "code": last_code_from_mail()})
+        refresh = r.data["refresh"]
+
+        r = self.post("/api/auth/logout/", {"refresh": refresh})
+        self.assertEqual(r.status_code, 200)
+        # بعد از خروج، با همان refresh نمی‌شود access گرفت
+        self.assertEqual(self.post("/api/auth/refresh/", {"refresh": refresh}).status_code, 401)
+        # خروج مجدد یا توکن خراب خطا نمی‌دهد؛ نبودن refresh خطای ۴۰۰ است
+        self.assertEqual(self.post("/api/auth/logout/", {"refresh": refresh}).status_code, 200)
+        self.assertEqual(self.post("/api/auth/logout/", {"refresh": "garbage"}).status_code, 200)
+        self.assertEqual(self.post("/api/auth/logout/", {}).status_code, 400)
+
+    def test_refresh_rotates_and_old_refresh_is_revoked(self):
+        self.post("/api/auth/email/request-otp/", {"email": EMAIL})
+        r = self.post("/api/auth/email/verify-otp/", {"email": EMAIL, "code": last_code_from_mail()})
+        old = r.data["refresh"]
+        r = self.post("/api/auth/refresh/", {"refresh": old})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("refresh", r.data)
+        self.assertNotEqual(r.data["refresh"], old)
+        self.assertEqual(self.post("/api/auth/refresh/", {"refresh": old}).status_code, 401)
+
     def test_bad_token_rejected(self):
         self.c.credentials(HTTP_AUTHORIZATION="Bearer garbage")
         self.assertEqual(self.c.get("/api/recordings/").status_code, 401)

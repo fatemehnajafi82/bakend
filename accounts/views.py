@@ -1,14 +1,16 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import AllowAny
+from rest_framework import generics
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
+from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import User
 from .serializers import (
     RequestOTPSerializer, VerifyOTPSerializer,
-    RequestEmailOTPSerializer, VerifyEmailOTPSerializer,
+    RequestEmailOTPSerializer, VerifyEmailOTPSerializer, ProfileSerializer,
 )
 from . import services
 
@@ -96,3 +98,31 @@ class VerifyEmailOTPView(APIView):
         except User.DoesNotExist:
             user, created = User.objects.create_user(email=email), True
         return Response(make_tokens(user, created))
+
+
+# ---------- خروج از حساب ----------
+class LogoutView(APIView):
+    """POST {"refresh": "..."}: refresh باطل می‌شود و دیگر نمی‌شود با آن access گرفت.
+    مجوز با خود refresh است (access ممکن است منقضی شده باشد)؛ اپ بعدش هر دو توکن را از گوشی پاک کند."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        token = request.data.get("refresh")
+        if not token:
+            return Response({"detail": "refresh لازم است."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            RefreshToken(token).blacklist()
+        except TokenError:
+            # منقضی یا قبلاً باطل‌شده: از نظر کاربر خروج انجام شده است
+            pass
+        return Response({"detail": "از حساب خارج شدی."})
+
+
+# ---------- پروفایل (نام و تاریخ زایمان → هفتهٔ بارداری) ----------
+class ProfileView(generics.RetrieveUpdateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ProfileSerializer
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_object(self):
+        return self.request.user
