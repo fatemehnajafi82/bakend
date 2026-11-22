@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models
+from django.utils import timezone
 
 
 class UserManager(BaseUserManager):
@@ -27,3 +28,15 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     USERNAME_FIELD = "phone"
     objects = UserManager()
+
+    def __str__(self):
+        # کاربرانی که با ایمیل ثبت‌نام کرده‌اند phone ندارند (None)
+        return self.phone or self.email or f"user-{self.pk}"
+
+    def pregnancy_week(self, on=None):
+        """هفتهٔ بارداری از روی تاریخ زایمان (۲۸۰ روز بارداری). بدون تاریخ یا خارج از بازه: None"""
+        if not self.due_date:
+            return None
+        on = on or timezone.localdate()
+        days = 280 - (self.due_date - on).days
+        return days // 7 if 0 <= days <= 301 else None

@@ -8,7 +8,7 @@ from .models import Recording
 
 ALLOWED_EXT = {".m4a", ".aac", ".mp3", ".wav", ".ogg"}
 MAX_SIZE = 20 * 1024 * 1024
-MAX_DURATION = 600
+MAX_DURATION = 120          # حداکثر مدت ضبط: ۲ دقیقه
 MAX_WAVEFORM_POINTS = 128
 
 
@@ -24,7 +24,7 @@ def probe_duration(f):
     if seconds < 1:
         raise serializers.ValidationError({"audio": "فایل صوتی معتبر نیست."})
     if seconds > MAX_DURATION:
-        raise serializers.ValidationError({"audio": "مدت ضبط بیشتر از ۱۰ دقیقه است."})
+        raise serializers.ValidationError({"audio": "مدت ضبط بیشتر از ۲ دقیقه است."})
     return seconds
 
 
@@ -34,8 +34,9 @@ class RecordingSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Recording
-        fields = ["id", "bpm", "duration", "waveform", "created_at", "audio", "audio_url"]
-        read_only_fields = ["id", "duration", "created_at"]
+        fields = ["id", "title", "note", "duration", "waveform", "pregnancy_week",
+                  "is_favorite", "created_at", "audio", "audio_url"]
+        read_only_fields = ["id", "duration", "pregnancy_week", "is_favorite", "created_at"]
         extra_kwargs = {"audio": {"write_only": True}}
 
     def get_audio_url(self, obj):
@@ -49,11 +50,6 @@ class RecordingSerializer(serializers.ModelSerializer):
         if f.size > MAX_SIZE:
             raise serializers.ValidationError("حجم فایل بیشتر از ۲۰ مگابایت است.")
         return f
-
-    def validate_bpm(self, v):
-        if v is not None and not 30 <= v <= 300:
-            raise serializers.ValidationError("مقدار ضربان معتبر نیست.")
-        return v
 
     def validate_waveform(self, v):
         if v is None:
@@ -70,3 +66,17 @@ class RecordingSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         attrs["duration"] = probe_duration(attrs["audio"])
         return attrs
+
+
+class RecordingUpdateSerializer(serializers.ModelSerializer):
+    """فقط علاقه‌مندی، عنوان و یادداشت قابل تغییرند؛ بقیه (صدا، مدت، تاریخ) ثابت‌اند."""
+
+    class Meta:
+        model = Recording
+        fields = ["is_favorite", "title", "note"]
+
+    def validate_title(self, v):
+        return v.strip()
+
+    def validate_note(self, v):
+        return v.strip()

@@ -1,8 +1,11 @@
+import logging
 import secrets
 from django.conf import settings
 from django.core.cache import cache
 from django.contrib.auth.hashers import make_password, check_password
 from django.core.mail import send_mail
+
+logger = logging.getLogger(__name__)
 
 OTP_TTL = 120          # اعتبار کد: ۲ دقیقه
 RESEND_COOLDOWN = 60   # فاصلهٔ ارسال مجدد
@@ -14,8 +17,11 @@ class OTPError(Exception):
 
 
 def send_sms(phone, code):
-    # فعلاً فقط چاپ در کنسول؛ بعداً با سرویس پیامک واقعی عوض می‌شود
-    print("OTP (dev only):", code)
+    # TODO: اتصال به سرویس پیامک واقعی. فعلاً فقط در حالت توسعه در کنسول چاپ می‌شود.
+    if settings.DEBUG:
+        print("OTP (dev only):", code)
+    else:
+        logger.error("SMS provider is not configured; OTP for %s was not delivered", phone)
 
 
 def send_email_code(email, code):
@@ -44,7 +50,8 @@ def send_otp(identifier: str, deliver):
     if cache.get(f"otp_cool:{identifier}"):
         raise OTPError("لطفاً کمی بعد دوباره تلاش کن.")
     code = f"{secrets.randbelow(10**6):06d}"
-    print("DEBUG OTP:", identifier, code)  
+    if settings.DEBUG:
+        print("DEBUG OTP:", identifier, code)
     cache.set(f"otp:{identifier}", make_password(code), OTP_TTL)
     cache.set(f"otp_cool:{identifier}", 1, RESEND_COOLDOWN)
     cache.delete(f"otp_tries:{identifier}")

@@ -1,0 +1,18 @@
+# محیط و رازها
+.env
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# داده‌های اجرا (نباید در ریپو باشند)
+db.sqlite3
+media/
+cache_data/
+staticfiles/
+downloaded.*
+
+# ابزار و ادیتور
+.idea/
+.vscode/
+*.log
